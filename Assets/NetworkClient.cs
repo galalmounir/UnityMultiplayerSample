@@ -7,6 +7,8 @@ public class NetworkClient : MonoBehaviour
 {
     public UdpNetworkDriver m_Driver;
     public NetworkConnection m_Connection;
+    public string m_ServerIp = "52.15.219.197";
+    public ushort m_ServerPort = 12345;
     public bool m_Done;
 
     void Start ()
@@ -14,7 +16,7 @@ public class NetworkClient : MonoBehaviour
         m_Driver = new UdpNetworkDriver(new INetworkParameter[0]);
         m_Connection = default(NetworkConnection);
 
-        var endpoint = NetworkEndPoint.Parse("52.15.219.197",12345);
+        var endpoint = NetworkEndPoint.Parse( m_ServerIp, m_ServerPort );
         // endpoint.Port = 9000;
         m_Connection = m_Driver.Connect(endpoint);
     }
