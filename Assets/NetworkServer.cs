@@ -1,31 +1,79 @@
 ﻿using UnityEngine;
 using UnityEngine.Assertions;
-
 using Unity.Collections;
 using Unity.Networking.Transport;
+using NetworkMessages;
+using System;
+using System.Text;
 
 public class NetworkServer : MonoBehaviour
 {
     public NetworkDriver m_Driver;
+    public ushort serverPort;
     private NativeList<NetworkConnection> m_Connections;
 
     void Start ()
     {
         m_Driver = NetworkDriver.Create();
         var endpoint = NetworkEndPoint.AnyIpv4;
-        endpoint.Port = 12345;
+        endpoint.Port = serverPort;
         if (m_Driver.Bind(endpoint) != 0)
-            Debug.Log("Failed to bind to port 12345");
+            Debug.Log("Failed to bind to port " + serverPort);
         else
             m_Driver.Listen();
 
         m_Connections = new NativeList<NetworkConnection>(16, Allocator.Persistent);
     }
-
+    void SendToServer(string message, NetworkConnection c){
+        var writer = m_Driver.BeginSend(NetworkPipeline.Null, c);
+        NativeArray<byte> bytes = new NativeArray<byte>(Encoding.ASCII.GetBytes(message),Allocator.Temp);
+        writer.WriteBytes(bytes);
+        m_Driver.EndSend(writer);
+    }
     public void OnDestroy()
     {
         m_Driver.Dispose();
         m_Connections.Dispose();
+    }
+
+    void OnConnect(NetworkConnection c){
+        m_Connections.Add(c);
+        Debug.Log("Accepted a connection");
+
+        //// Example to send a handshake message:
+        // HandshakeMsg m = new HandshakeMsg();
+        // m.player.id = c.InternalId.ToString();
+        // SendToServer(JsonUtility.ToJson(m),c);        
+    }
+
+    void OnData(DataStreamReader stream, int i){
+        NativeArray<byte> bytes = new NativeArray<byte>(stream.Length,Allocator.Temp);
+        stream.ReadBytes(bytes);
+        string recMsg = Encoding.ASCII.GetString(bytes.ToArray());
+        NetworkHeader header = JsonUtility.FromJson<NetworkHeader>(recMsg);
+
+        switch(header.cmd){
+            case Commands.HANDSHAKE:
+            HandshakeMsg hsMsg = JsonUtility.FromJson<HandshakeMsg>(recMsg);
+            Debug.Log("Handshake message received!");
+            break;
+            case Commands.PLAYER_UPDATE:
+            PlayerUpdateMsg puMsg = JsonUtility.FromJson<PlayerUpdateMsg>(recMsg);
+            Debug.Log("Player update message received!");
+            break;
+            case Commands.SERVER_UPDATE:
+            ServerUpdateMsg suMsg = JsonUtility.FromJson<ServerUpdateMsg>(recMsg);
+            Debug.Log("Server update message received!");
+            break;
+            default:
+            Debug.Log("Unrecognized message received!");
+            break;
+        }
+    }
+
+    void OnDisconnect(int i){
+        Debug.Log("Client disconnected from server");
+        m_Connections[i] = default(NetworkConnection);
     }
 
     void Update ()
@@ -41,38 +89,36 @@ public class NetworkServer : MonoBehaviour
                 --i;
             }
         }
+
         // AcceptNewConnections
-        NetworkConnection c;
-        while ((c = m_Driver.Accept()) != default(NetworkConnection))
-        {
-            m_Connections.Add(c);
-            Debug.Log("Accepted a connection");
+        NetworkConnection c = m_Driver.Accept();
+        while (c  != default(NetworkConnection))
+        {            
+            OnConnect(c);
+
+            // Check if there is another new connection
+            c = m_Driver.Accept();
         }
 
         DataStreamReader stream;
         for (int i = 0; i < m_Connections.Length; i++)
         {
             Assert.IsTrue(m_Connections[i].IsCreated);
-
+            
             NetworkEvent.Type cmd;
-            while ((cmd = m_Driver.PopEventForConnection(m_Connections[i], out stream)) != NetworkEvent.Type.Empty)
+            cmd = m_Driver.PopEventForConnection(m_Connections[i], out stream);
+            while (cmd != NetworkEvent.Type.Empty)
             {
                 if (cmd == NetworkEvent.Type.Data)
                 {
-                    uint number = stream.ReadUInt();
-
-                    Debug.Log("Got " + number + " from the Client adding + 2 to it.");
-                    number +=2;
-
-                    var writer = m_Driver.BeginSend(NetworkPipeline.Null, m_Connections[i]);
-                    writer.WriteUInt(number);
-                    m_Driver.EndSend(writer);
+                    OnData(stream, i);
                 }
                 else if (cmd == NetworkEvent.Type.Disconnect)
                 {
-                    Debug.Log("Client disconnected from server");
-                    m_Connections[i] = default(NetworkConnection);
+                    OnDisconnect(i);
                 }
+
+                cmd = m_Driver.PopEventForConnection(m_Connections[i], out stream);
             }
         }
     }
