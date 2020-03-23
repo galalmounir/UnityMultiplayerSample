@@ -2,6 +2,7 @@
 using Unity.Collections;
 using Unity.Networking.Transport;
 using NetworkMessages;
+using NetworkObjects;
 using System;
 using System.Text;
 
